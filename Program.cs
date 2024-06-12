@@ -20,7 +20,6 @@ namespace HyperXBatteryMonitor {
     public class SystemTrayApp : ApplicationContext {
         private static readonly ushort[] VENDOR_IDS = { 0x0951, 0x03F0 };
         private static readonly ushort[] PRODUCT_IDS = { 0x1718, 0x1723, 0x1725, 0x018B, 0x0D93 };
-        private static readonly string HID_PATH = "col03";
         private static readonly byte[] BATTERY_PACKET = { 0x21, 0xFF, 0x05, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
         private NotifyIcon notifyIcon;
@@ -50,12 +49,12 @@ namespace HyperXBatteryMonitor {
             }
         }
 
-        private void PollDevice() { 
+        private void PollDevice() {
             var devices = DeviceList.Local.GetHidDevices().ToList();
             var vendorIds = VENDOR_IDS.Select(v => (int)v);
             var productIds = PRODUCT_IDS.Select(p => (int)p);
             foreach (var device in devices) {
-                if (vendorIds.Contains(device.VendorID) && productIds.Contains(device.ProductID) && device.DevicePath.Contains(HID_PATH)) {
+                if (vendorIds.Contains(device.VendorID) && productIds.Contains(device.ProductID)) {
                     if (device.TryOpen(out HidStream hidStream)) {
                         try {
                             var batteryLevel = TryGetBatteryLevel(hidStream);
