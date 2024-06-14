@@ -18,24 +18,31 @@ namespace HyperXBatteryMonitor {
     }
 
     public class SystemTrayApp : ApplicationContext {
-        private static readonly ushort[] VENDOR_IDS = { 0x0951, 0x03F0 };
-        private static readonly ushort[] PRODUCT_IDS = { 0x1718, 0x1723, 0x1725, 0x018B, 0x0D93 };
+        private static readonly ushort[] VENDOR_IDS = { 0x0951 };
+        private static readonly ushort[] PRODUCT_IDS = { 0x1723, 0x16c4 };
         private static readonly byte[] BATTERY_PACKET = { 0x21, 0xFF, 0x05, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-
-        private NotifyIcon notifyIcon;
-        private Timer timer;
+        private static readonly string NOTIFY_ICON_TEXT = "Headphones: Inactive";
+        private static int _batteryLevel = 255;
+        private static bool _isCharging;
+        private readonly NotifyIcon _notifyIcon;
+        private readonly Timer _timer;
 
         public SystemTrayApp() {
-            notifyIcon = new NotifyIcon {
+            _notifyIcon = new NotifyIcon {
                 Icon = GetEmbeddedIcon("headset-32.ico"),
                 Visible = true,
                 ContextMenuStrip = new ContextMenuStrip()
             };
-            notifyIcon.ContextMenuStrip.Items.Add("Exit", null, Exit);
-            timer = new Timer { Interval = 10000 }; // Check every minute
-            timer.Tick += Timer_Tick;
-            timer.Start();
+            _notifyIcon.ContextMenuStrip.Items.Add("Exit", null, Exit);
+            _timer = new Timer { Interval = 10000 }; // Check / Poll every 10 seconds
+            _timer.Tick += Timer_Tick;
+            _timer.Start();
             UpdateBatteryStatus();
+        }
+
+        private static string GetChargingStatus() { return _isCharging ? "Charging" : "Active"; }
+        private static string GetBatteryLevelStatus() {
+            return _batteryLevel == 255 ? "N/A" : $"Headphones: {GetChargingStatus()}\nBattery: {_batteryLevel}%";
         }
 
         private void Timer_Tick(object sender, EventArgs e) { UpdateBatteryStatus(); }
@@ -45,7 +52,7 @@ namespace HyperXBatteryMonitor {
                 PollDevice();
             }
             catch (Exception) {
-                notifyIcon.Text = "Headphones: Inactive";
+                UpdateNotificationText(NOTIFY_ICON_TEXT);
             }
         }
 
@@ -57,29 +64,31 @@ namespace HyperXBatteryMonitor {
                 if (vendorIds.Contains(device.VendorID) && productIds.Contains(device.ProductID)) {
                     if (device.TryOpen(out HidStream hidStream)) {
                         try {
-                            var batteryLevel = TryGetBatteryLevel(hidStream);
-                            if (batteryLevel == 255) continue;
-                            var batteryStatus = $"Headphones: Active\nBattery: {batteryLevel}%";
-                            notifyIcon.Text = batteryStatus;
+                            TryGetBatteryLevel(hidStream);
+                            if (_batteryLevel == 255) continue;
+                            UpdateNotificationText(GetBatteryLevelStatus());
                             hidStream.Close();
                             return;
                         } catch (Exception) {
-                            notifyIcon.Text = "Headphones: Inactive";
+                            UpdateNotificationText(NOTIFY_ICON_TEXT);
                             hidStream.Close();
                         }
                     }
                 }
             }
-            notifyIcon.Text = "Headphones: Inactive";
+            UpdateNotificationText(NOTIFY_ICON_TEXT);
         }
 
-        private static int TryGetBatteryLevel(HidStream hidStream) {
+        private static void TryGetBatteryLevel(HidStream hidStream) {
             TryWritePacketToStream(hidStream, BATTERY_PACKET);
             byte[] buffer = TryReadPacketFromStream(hidStream);
-            if (buffer == null) return 255;
-            var magicValue = buffer[4] != 0 ? buffer[4] : buffer[3];
-            var chargeState = buffer[3];
-            return CalculatePercentage(chargeState, magicValue);
+            if (buffer == null) {
+                _batteryLevel = 255;
+                return;
+            }
+            Console.WriteLine($@"[packet response contents] {BitConverter.ToString(buffer)}");
+            _isCharging = buffer[3] == 0x10 || buffer[3] == 0x11;
+            _batteryLevel = CalculatePercentage(buffer[3], buffer[4]);
         }
 
         private static void TryWritePacketToStream(HidStream hidStream, byte[] packet) {
@@ -93,47 +102,36 @@ namespace HyperXBatteryMonitor {
             return buffer;
         }
 
-        private static int CalculatePercentage(int chargeState, int magicValue) {
-            if (chargeState == 0x10)
-            {
-                return magicValue <= 11 ? 200 : 199;
+        private static byte CalculatePercentage(byte chargeState, byte value) {
+            if (chargeState == 0x0e) {
+                if (value <= 89) return 10;
+                if (value <= 119) return 15;
+                if (value <= 148) return 20;
+                if (value <= 159) return 25;
+                if (value <= 169) return 30;
+                if (value <= 179) return 35;
+                if (value <= 189) return 40;
+                if (value <= 199) return 45;
+                if (value <= 209) return 50;
+                if (value <= 219) return 55;
+                if (value <= 239) return 60;
+                return 65;
             }
-
-            if (chargeState == 0xf)
-            {
-                if (magicValue >= 130) return 100;
-                if (magicValue >= 120) return 95;
-                if (magicValue >= 100) return 90;
-                if (magicValue >= 70) return 85;
-                if (magicValue >= 50) return 80;
-                if (magicValue >= 20) return 75;
-                if (magicValue > 0) return 70;
+            if (chargeState == 0x0f) {
+                if (value <= 19) return 70;
+                if (value <= 49) return 75;
+                if (value <= 69) return 80;
+                if (value <= 99) return 85;
+                if (value <= 119) return 90;
+                if (value <= 129) return 95;
+                return 100;
             }
-
-            if (chargeState == 0xe)
-            {
-                if (magicValue > 240) return 65;
-                if (magicValue >= 220) return 60;
-                if (magicValue >= 208) return 55;
-                if (magicValue >= 200) return 50;
-                if (magicValue >= 190) return 45;
-                if (magicValue >= 180) return 40;
-                if (magicValue >= 169) return 35;
-                if (magicValue >= 159) return 30;
-                if (magicValue >= 148) return 25;
-                if (magicValue >= 119) return 20;
-                if (magicValue >= 90) return 15;
-                if (magicValue < 90) return 10;
-                return 66;
-            }
-
-            // means error value of 255
-            return 255;
+            return 100;
         }
-
+        private void UpdateNotificationText(string text) { if (_notifyIcon.Text != text) _notifyIcon.Text = text; }
 
         private void Exit(object sender, EventArgs e) {
-            notifyIcon.Visible = false;
+            _notifyIcon.Visible = false;
             Application.Exit();
         }
         
